@@ -47,6 +47,7 @@ class HandResult:
     pfr: list[bool]
     aggressive: list[int]
     calls: list[int]
+    stacks: list[int] = field(default_factory=list)
     actions: list[dict] = field(default_factory=list)
 
 
@@ -108,12 +109,14 @@ def play_hand(
     else:
         raise RuntimeError("hand did not finish")  # pragma: no cover
     payoffs = [int(value) for value in state.payoffs]
+    stacks = [int(value) for value in state.stacks]
     return HandResult(
         payoffs=payoffs,
         vpip=list(tracker.vpip),
         pfr=list(tracker.pfr),
         aggressive=list(tracker.aggressive),
         calls=list(tracker.calls),
+        stacks=stacks,
         actions=list(tracker.actions),
     )
 

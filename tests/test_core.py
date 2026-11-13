@@ -205,6 +205,7 @@ def test_showdown_all_in_and_coercion():
     ]
     result = play_hand(bots, SAMPLE_HOLES, SAMPLE_BOARD, SAMPLE_BURNS)
     assert result.payoffs == [-1, -2, 403, -400, 0, 0]
+    assert result.stacks == [399, 398, 803, 0, 400, 400]
     assert result.actions[0]["kind"] == "raise"
     assert result.actions[0]["amount"] == 400
     assert result.vpip[2] is True and result.pfr[2] is True

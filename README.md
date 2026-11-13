@@ -137,13 +137,15 @@ On the Linux environment used to develop this (Python 3.12, no GPU):
 ```text
 poker-lab simulate --hands 10000 --seed 1
 Hands played: 10038 (requested 10000).
-Speed: 376.2 hands/sec in 26.68s.
+Speed: 380.4 hands/sec in 26.39s.
 ```
 
 Ten thousand hands of the seven baselines finished in under half a minute,
 which is well under a few minutes. Showdowns are the slow part: PokerKit's
 pure-Python hand comparison is what a calling station forces the table into.
-Fold-heavy lineups are several times faster.
+Fold-heavy lineups are several times faster. The sum of every bot's chip
+delta on this run is 0. Each hand starts from a fresh 200bb stack; payoffs
+are the change from that stack, not a running balance.
 
 That same run, seed 1, blinds 1/2, 200bb:
 
@@ -158,7 +160,9 @@ That same run, seed 1, blinds 1/2, 200bb:
 | random | -1481.2 | [-1735.1, -1227.3] | 8604 | 636 | 54.6 | 26.9 | 0.75 |
 
 The gaps are large because the maniac and the station pay off strong hands for
-200bb. Chip totals across the table sum to zero.
+200bb. That is why the equity bot's +1331 bb/100 is not a scoring bug: it won
+229095 chips over 8604 hands, and the other six bots lost exactly that many.
+A normal 95% interval on those per-hand results still sits well above zero.
 
 ## Tests
 

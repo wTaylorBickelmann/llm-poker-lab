@@ -16,8 +16,9 @@ from llm_poker_lab.bots import (
     pot_sized,
     sized_raise,
 )
+from llm_poker_lab.engine import play_hand
 from llm_poker_lab.simulate import choose_lineup, deal_cards, plan_deals, simulate, sitout_cycle
-from tests.support import Scripted, decision, fold_bot
+from tests.support import SAMPLE_BOARD, SAMPLE_BURNS, SAMPLE_HOLES, Scripted, decision, fold_bot
 import random
 
 
@@ -182,6 +183,65 @@ def test_schedule_and_duplicate_match():
     twins = [fold_bot("same") for _ in range(6)]
     with pytest.raises(ValueError):
         simulate(twins, hands=6)
+
+
+def test_chip_conservation_and_fresh_stacks():
+    """Payoffs are the chip delta from a stack that resets at the start of every hand."""
+    stack = 400
+    folders = [Scripted(f"f{index}", {"kind": "fold"}) for index in range(6)]
+    folded = play_hand(folders, SAMPLE_HOLES, SAMPLE_BOARD, SAMPLE_BURNS, stack=stack)
+    assert folded.payoffs == [-1, 1, 0, 0, 0, 0]
+    assert sum(folded.payoffs) == 0
+    assert folded.stacks == [stack + payoff for payoff in folded.payoffs]
+    assert sum(folded.stacks) == stack * 6
+
+    wider = play_hand(folders, SAMPLE_HOLES, SAMPLE_BOARD, SAMPLE_BURNS, sb=5, bb=10, stack=200)
+    assert wider.payoffs == [-5, 5, 0, 0, 0, 0]
+    assert wider.stacks == [200 + payoff for payoff in wider.payoffs]
+
+    def mixed(state):
+        """Shove from UTG, call from the hijack, and fold the rest."""
+        if state["hero_index"] == 2 and state["can_raise"]:
+            return {"kind": "raise", "amount": state["max_raise_to"]}
+        if state["hero_index"] == 3:
+            return {"kind": "check_call"}
+        return {"kind": "fold"}
+
+    swung = play_hand(
+        [Scripted(f"m{index}", mixed) for index in range(6)],
+        SAMPLE_HOLES,
+        SAMPLE_BOARD,
+        SAMPLE_BURNS,
+        stack=stack,
+    )
+    assert sum(swung.payoffs) == 0
+    assert swung.stacks == [stack + payoff for payoff in swung.payoffs]
+    assert max(swung.stacks) > stack
+    reset = play_hand(folders, SAMPLE_HOLES, SAMPLE_BOARD, SAMPLE_BURNS, stack=stack)
+    assert reset.payoffs == folded.payoffs
+    assert reset.stacks == folded.stacks
+
+    styles = (
+        {"kind": "fold"},
+        {"kind": "check_call"},
+        lambda state: (
+            {"kind": "raise", "amount": state["max_raise_to"]}
+            if state["can_raise"]
+            else {"kind": "check_call"}
+        ),
+    )
+    for seed in range(8):
+        holes, burns, board = deal_cards(random.Random(seed))
+        table = [Scripted(f"s{index}", styles[index % 3]) for index in range(6)]
+        dealt = play_hand(table, holes, board, burns, stack=250, sb=2, bb=4)
+        assert sum(dealt.payoffs) == 0
+        assert dealt.stacks == [250 + payoff for payoff in dealt.payoffs]
+        assert sum(dealt.stacks) == 250 * 6
+        assert all(chips >= 0 for chips in dealt.stacks)
+
+    match = simulate(make_baselines(1), hands=36, seed=7)
+    assert sum(book.profit for book in match.books.values()) == 0
+    assert all(book.hands > 0 for book in match.books.values())
 
 
 def test_disqualification_stops_the_match():
