@@ -9,7 +9,7 @@ import pytest
 
 from llm_poker_lab.cli import main
 from llm_poker_lab.evolve import _default_dir, _progress, evolve, run_generation
-from llm_poker_lab.ollama import OllamaError
+from llm_poker_lab.llm import LLMError
 from llm_poker_lab.report import format_af, format_bb, format_ci, write_report
 from tests.support import BAD_IMPORT_BOT, CRASH_BOT, LOOP_BOT, VALID_BOT
 
@@ -156,7 +156,8 @@ def test_cli_simulate_and_errors(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("llm_poker_lab.cli.evolve", fake_evolve)
     assert main(["evolve", "--generations", "2", "--hands", "6", "--model", "qwen2.5-coder"]) == 0
     assert captured["out"] is None
-    assert captured["model"] == "qwen2.5-coder"
+    assert captured["client"].model == "qwen2.5-coder"
+    assert captured["client"].provider == "ollama"
     assert main(["evolve", "--generations", "1", "--hands", "6", "--out", str(tmp_path / "explicit")]) == 0
     assert captured["out"] == tmp_path / "explicit"
     assert main(["evolve", "--generations", "0", "--hands", "6"]) == 1
@@ -164,7 +165,7 @@ def test_cli_simulate_and_errors(tmp_path, monkeypatch, capsys):
 
     def boom(**kwargs):
         """Stand in for a down Ollama server."""
-        raise OllamaError("down")
+        raise LLMError("down")
 
     monkeypatch.setattr("llm_poker_lab.cli.evolve", boom)
     assert main(["evolve", "--generations", "1", "--hands", "6", "--out", str(tmp_path / "down")]) == 1

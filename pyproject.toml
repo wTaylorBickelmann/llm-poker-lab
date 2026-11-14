@@ -14,6 +14,7 @@ dependencies = [
     "pokerkit>=0.6,<0.8",
     "eval7>=0.1.10",
     "matplotlib>=3.8",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]

@@ -1,12 +1,7 @@
-"""Prompt assembly and the Ollama HTTP client."""
-
-import io
-import json
-import urllib.error
+"""Prompt assembly for the evolution loop."""
 
 import pytest
 
-from llm_poker_lab.ollama import OllamaError, chat, normalize_host
 from llm_poker_lab.prompt import SYSTEM_PROMPT, ParseError, build_user_prompt, parse_response
 
 
@@ -79,82 +74,3 @@ def test_prompt_bounds_and_selection():
     history = [_row(i, bb=float(i), strategy="s" * 2000, code="c" * 4000) for i in range(1, 6)]
     bounded = build_user_prompt(history, top_k=4, last_m=3, max_chars=500)
     assert len(bounded) <= 500
-
-
-def test_ollama_chat(monkeypatch):
-    """The client reads message content and turns transport errors into OllamaError."""
-    seen = {}
-
-    class Response:
-        """A context manager around a fixed body."""
-
-        def __init__(self, payload):
-            self.payload = payload
-
-        def read(self):
-            """Return the canned body."""
-            return self.payload
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-    def fake_open(request, timeout=0):
-        """Capture the outgoing chat request."""
-        seen["timeout"] = timeout
-        seen["body"] = json.loads(request.data.decode())
-        return Response(b'{"message": {"content": " STRATEGY:\\nfold\\n "}}')
-
-    monkeypatch.setattr("llm_poker_lab.ollama.urllib.request.urlopen", fake_open)
-    assert "fold" in chat("localhost:11434", "qwen", "sys", "user", timeout=3, temperature=0.2)
-    assert seen["timeout"] == 3
-    assert seen["body"]["model"] == "qwen"
-    assert seen["body"]["messages"][0]["content"] == "sys"
-    assert normalize_host("http://127.0.0.1:11434/") == "http://127.0.0.1:11434"
-
-    def raise_http(request, timeout=0):
-        """Simulate an HTTP 500 from Ollama."""
-        raise urllib.error.HTTPError("http://x", 500, "bad", hdrs=None, fp=io.BytesIO(b"nope"))
-
-    monkeypatch.setattr("llm_poker_lab.ollama.urllib.request.urlopen", raise_http)
-    with pytest.raises(OllamaError, match="HTTP 500"):
-        chat("http://127.0.0.1:9", "m", "s", "u", timeout=1)
-
-    def raise_url(request, timeout=0):
-        """Simulate a refused connection."""
-        raise urllib.error.URLError("refused")
-
-    monkeypatch.setattr("llm_poker_lab.ollama.urllib.request.urlopen", raise_url)
-    with pytest.raises(OllamaError, match="Could not reach"):
-        chat("http://127.0.0.1:9", "m", "s", "u", timeout=1)
-
-    def raise_timeout(request, timeout=0):
-        """Simulate a stalled server."""
-        raise TimeoutError("slow")
-
-    monkeypatch.setattr("llm_poker_lab.ollama.urllib.request.urlopen", raise_timeout)
-    with pytest.raises(OllamaError, match="timed out"):
-        chat("http://127.0.0.1:9", "m", "s", "u", timeout=1)
-
-    def bad_body(payload):
-        """Return a response with the given bytes."""
-
-        def opener(request, timeout=0):
-            return Response(payload)
-
-        return opener
-
-    monkeypatch.setattr("llm_poker_lab.ollama.urllib.request.urlopen", bad_body(b"not-json"))
-    with pytest.raises(OllamaError, match="Unexpected"):
-        chat("http://h", "m", "s", "u")
-    monkeypatch.setattr("llm_poker_lab.ollama.urllib.request.urlopen", bad_body(b'{"message": {}}'))
-    with pytest.raises(OllamaError, match="Unexpected"):
-        chat("http://h", "m", "s", "u")
-    monkeypatch.setattr("llm_poker_lab.ollama.urllib.request.urlopen", bad_body(b'{"message": {"content": "  "}}'))
-    with pytest.raises(OllamaError, match="empty"):
-        chat("http://h", "m", "s", "u")
-    monkeypatch.setattr("llm_poker_lab.ollama.urllib.request.urlopen", bad_body(b'{"message": {"content": 3}}'))
-    with pytest.raises(OllamaError, match="empty"):
-        chat("http://h", "m", "s", "u")

@@ -1,6 +1,6 @@
 # llm-poker-lab
 
-A local LLM writes a 6-max no-limit Texas Hold'em bot, plays it for thousands of
+A local or remote LLM writes a 6-max no-limit Texas Hold'em bot, plays it for thousands of
 hands against a fixed field, and tries again with the measured results in the
 prompt. Rules and showdowns come from [PokerKit](https://github.com/uoftcprg/pokerkit)
 (MIT). Equity estimates come from [eval7](https://github.com/julianandrews/pyeval7)
@@ -8,19 +8,22 @@ prompt. Rules and showdowns come from [PokerKit](https://github.com/uoftcprg/pok
 
 ```
                          poker-lab
-            simulate        |        evolve         report
-               |            |           |              |
-               v            |           v              v
-          +---------+       |      +---------+    +-----------+
-          | matcher |<------+------|  loop   |    | charts +  |
-          | N hands |              | Ollama  |    | markdown  |
-          +----+----+              +----+----+    +-----------+
+            simulate        |        evolve          report
+               |            |           |               |
+               v            |           v               v
+          +---------+       |      +----------+    +-----------+
+          | matcher |<------+------|   loop   |    | charts +  |
+          | N hands |              | 1 call   |    | markdown  |
+          +----+----+              +----+-----+    +-----------+
                |                        |
-               v                        v
-          +---------+              +---------+
-          | engine  |              | sandbox |
-          | PokerKit|              | child   |
-          +----+----+              | process |
+               |                  +-----+------+
+               |                  | LLMClient  |
+               |                  | ollama|api |
+               v                  +-----+------+
+          +---------+                   |
+          | engine  |                   v
+          | PokerKit|              +---------+
+          +----+----+              | sandbox |
                |                   +---------+
        +-------+--------+
        v                v
@@ -50,22 +53,57 @@ pip install -e ".[dev]"
 ollama pull qwen2.5-coder
 ```
 
-Ollama's default listen address is `http://127.0.0.1:11434`. Point `--host`
-somewhere else if yours is different.
-
 ## Commands
 
 ```bash
 # Seven baselines, duplicate deals. 10000 is rounded up to a full rotation.
 poker-lab simulate --hands 10000 --seed 1
 
-# Twenty generations. The model is called once per generation, then the bot
-# plays the hand count (default 3000, also rounded up).
+# Local Ollama. One model call per generation, then the hand count.
+ollama pull qwen2.5-coder
 poker-lab evolve --generations 20 --hands 5000 --model qwen2.5-coder
+
+# Any OpenAI-compatible server: OpenAI, OpenRouter, Together, Groq, vLLM, LM Studio.
+export POKER_LAB_API_KEY=sk-...
+# OPENAI_API_KEY is used when POKER_LAB_API_KEY is unset.
+poker-lab evolve --provider api --base-url https://api.openai.com/v1 --model gpt-4o-mini
 
 # Rebuild the markdown leaderboard and the PNGs for a saved run.
 poker-lab report runs/evolve-20261113T230000Z
 ```
+
+## LLM providers
+
+`--provider ollama` (the default) posts to `{base-url}/api/chat`. The default
+base URL is `http://127.0.0.1:11434` and the default model is `qwen2.5-coder`.
+`--host` is still accepted as an alias for `--base-url`.
+
+`--provider api` posts to `{base-url}/chat/completions` with
+`Authorization: Bearer ...`. The default base URL is `https://api.openai.com/v1`
+and the default model is `gpt-4o-mini`. The key is read from the environment
+variable named by `--api-key-env` (default `POKER_LAB_API_KEY`). If that
+variable is empty, `OPENAI_API_KEY` is the fallback. The key is never read
+from a config file and never written to `results.json`, `config.json`, or the
+console.
+
+The same three settings can live in the environment or in `poker-lab.toml`
+in the working directory. Precedence is command line, then environment, then
+the file, then the defaults above.
+
+```bash
+export POKER_LAB_PROVIDER=api
+export POKER_LAB_MODEL=gpt-4o-mini
+export POKER_LAB_BASE_URL=https://openrouter.ai/api/v1
+export POKER_LAB_API_KEY=sk-...
+```
+
+```toml
+provider = "api"
+model = "gpt-4o-mini"
+base_url = "https://api.openai.com/v1"
+```
+
+Do not put the API key in that file. A field named `api_key` is ignored.
 
 Each evolution generation is saved as:
 

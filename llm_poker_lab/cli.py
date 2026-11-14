@@ -1,21 +1,22 @@
-"""Command line: simulate the field, evolve with Ollama, or redraw a report.
+"""Command line: simulate the field, evolve with a local or remote LLM, or redraw a report.
 
 ::
 
     poker-lab simulate ---> Match ---> runs/sim-*/leaderboard.md
-    poker-lab evolve ----> Ollama + sandbox ---> runs/evolve-*/gen-NNN/
+    poker-lab evolve ----> LLMClient + sandbox ---> runs/evolve-*/gen-NNN/
     poker-lab report ----> charts and markdown for an existing run
 """
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 from llm_poker_lab.bots import make_baselines
 from llm_poker_lab.evolve import evolve
-from llm_poker_lab.ollama import OllamaError
+from llm_poker_lab.llm import LLMError, build_client, resolve_settings
 from llm_poker_lab.report import format_match, write_report
 from llm_poker_lab.simulate import simulate
 
@@ -30,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "evolve":
             return _cmd_evolve(args)
         return _cmd_report(args)
-    except (OllamaError, ValueError, OSError) as exc:
+    except (LLMError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -47,12 +48,16 @@ def _parser() -> argparse.ArgumentParser:
     sim.add_argument("--hands", type=int, default=6000)
     sim.add_argument("--seed", type=int, default=1)
     sim.add_argument("--out", default=None)
-    evo = sub.add_parser("evolve", help="ask Ollama for a new bot each generation")
+    evo = sub.add_parser("evolve", help="ask a local or remote LLM for a new bot each generation")
     _add_table_args(evo)
     evo.add_argument("--generations", type=int, default=20)
     evo.add_argument("--hands", type=int, default=3000)
-    evo.add_argument("--model", default="qwen2.5-coder")
-    evo.add_argument("--host", default="http://127.0.0.1:11434")
+    evo.add_argument("--provider", choices=["ollama", "api"], default=None)
+    evo.add_argument("--model", default=None)
+    evo.add_argument("--base-url", default=None)
+    evo.add_argument("--host", default=None, help="alias for --base-url, usually the Ollama server")
+    evo.add_argument("--api-key-env", default=None, help="env var that holds the API key (default POKER_LAB_API_KEY)")
+    evo.add_argument("--config", default=None, help="toml settings file (default ./poker-lab.toml if present)")
     evo.add_argument("--seed", type=int, default=1)
     evo.add_argument("--out", default=None)
     evo.add_argument("--top-k", type=int, default=3)
@@ -60,7 +65,8 @@ def _parser() -> argparse.ArgumentParser:
     evo.add_argument("--decision-timeout", type=float, default=0.5)
     evo.add_argument("--max-failures", type=int, default=5)
     evo.add_argument("--temperature", type=float, default=0.7)
-    evo.add_argument("--ollama-timeout", type=float, default=180.0)
+    evo.add_argument("--timeout", type=float, default=180.0)
+    evo.add_argument("--ollama-timeout", type=float, default=None, help=argparse.SUPPRESS)
     rep = sub.add_parser("report", help="write charts and a leaderboard for a saved run")
     rep.add_argument("run")
     return parser
@@ -102,22 +108,30 @@ def _cmd_evolve(args: argparse.Namespace) -> int:
     if args.hands < 1:
         raise ValueError("hands must be positive")
     out = Path(args.out) if args.out else None
+    settings = resolve_settings(
+        provider=args.provider,
+        model=args.model,
+        base_url=args.base_url,
+        host=args.host,
+        api_key_env=args.api_key_env,
+        config_path=args.config,
+        environ=os.environ,
+    )
+    timeout = args.ollama_timeout if args.ollama_timeout is not None else args.timeout
+    client = build_client(settings, timeout=timeout, temperature=args.temperature)
     run = evolve(
         generations=args.generations,
         hands=args.hands,
-        model=args.model,
-        host=args.host,
         seed=args.seed,
         out=out,
         top_k=args.top_k,
         last_m=args.last_m,
         decision_timeout=args.decision_timeout,
         max_failures=args.max_failures,
-        temperature=args.temperature,
-        ollama_timeout=args.ollama_timeout,
         sb=args.sb,
         bb=args.bb,
         stack_bb=args.stack_bb,
+        client=client,
     )
     print(f"wrote {run}")
     return 0

@@ -1,15 +1,15 @@
 """One generation: ask the model, sandbox the bot, measure it, save the files.
 
-Ollama is called once per generation. The bot then plays the configured
-number of hands against the baseline field. Whatever comes back, including
-a disqualification, is written under ``runs/<id>/gen-NNN/`` and becomes
-context for the next prompt.
+The configured client is called once per generation. The bot then plays
+the configured number of hands against the baseline field. Whatever comes
+back, including a disqualification, is written under ``runs/<id>/gen-NNN/``
+and becomes context for the next prompt.
 
 ::
 
-    prompt + history ---> Ollama ---> bot.py + strategy.md
-                              |
-                              v
+    prompt + history ---> client.complete ---> bot.py + strategy.md
+                                |
+                                v
                          sandbox match ---> results.json ---> next prompt
 """
 
@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 
 from llm_poker_lab.bots import make_baselines
-from llm_poker_lab.ollama import chat
+from llm_poker_lab.llm import LLMClient, OllamaClient
 from llm_poker_lab.prompt import SYSTEM_PROMPT, ParseError, build_user_prompt, parse_response
 from llm_poker_lab.report import write_report
 from llm_poker_lab.sandbox import SandboxBot, SandboxError, validate_source
@@ -27,8 +27,6 @@ from llm_poker_lab.simulate import simulate
 def evolve(
     generations: int = 20,
     hands: int = 3000,
-    model: str = "qwen2.5-coder",
-    host: str = "http://127.0.0.1:11434",
     seed: int = 1,
     out: Path | None = None,
     top_k: int = 3,
@@ -36,41 +34,42 @@ def evolve(
     decision_timeout: float = 0.5,
     max_failures: int = 5,
     max_seconds: float = 120.0,
-    temperature: float = 0.7,
-    ollama_timeout: float = 180.0,
     sb: int = 1,
     bb: int = 2,
     stack_bb: int = 200,
     max_chars: int = 12000,
-    chatter=None,
+    client: LLMClient | None = None,
 ) -> Path:
     """Run ``generations`` of write-and-measure and return the run directory."""
     if generations < 1:
         raise ValueError("generations must be positive")
     run_dir = Path(out) if out is not None else _default_dir()
     run_dir.mkdir(parents=True, exist_ok=True)
-    talk = chatter or chat
+    if client is None:
+        client = OllamaClient("http://127.0.0.1:11434", "qwen2.5-coder")
+    info = client.public()
     config = {
         "generations": generations,
         "hands": hands,
-        "model": model,
-        "host": host,
+        "provider": info["provider"],
+        "model": info["model"],
+        "base_url": info["base_url"],
         "seed": seed,
         "top_k": top_k,
         "last_m": last_m,
         "decision_timeout": decision_timeout,
         "max_failures": max_failures,
-        "temperature": temperature,
         "sb": sb,
         "bb": bb,
         "stack_bb": stack_bb,
     }
     _dump(run_dir / "config.json", config)
+    print(f"llm {info['provider']} {info['model']} {info['base_url']}")
     history: list[dict] = []
     baselines = make_baselines(seed)
     for generation in range(1, generations + 1):
         user_prompt = build_user_prompt(history, top_k=top_k, last_m=last_m, max_chars=max_chars)
-        raw = talk(host, model, SYSTEM_PROMPT, user_prompt, timeout=ollama_timeout, temperature=temperature)
+        raw = client.complete(SYSTEM_PROMPT, user_prompt)
         record = run_generation(
             run_dir,
             generation,
@@ -85,6 +84,7 @@ def evolve(
             sb=sb,
             bb=bb,
             stack_bb=stack_bb,
+            llm=info,
         )
         history.append(record)
         print(_progress(generation, record))
@@ -108,6 +108,7 @@ def run_generation(
     bb: int,
     stack_bb: int,
     load_timeout: float = 5.0,
+    llm: dict | None = None,
 ) -> dict:
     """Save one generation's files, play the match, and return prompt context."""
     gen_dir = run_dir / f"gen-{generation:03d}"
@@ -126,6 +127,7 @@ def run_generation(
         "elapsed_sec": 0.0,
         "hands_per_sec": 0.0,
         "bots": [],
+        "llm": llm,
     }
     if error is None:
         _play(
